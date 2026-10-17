@@ -1,7 +1,10 @@
+mod svd;
+
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::time::Instant;
 use nalgebra::{DMatrix, DVector};
+use svd::CustomSVD;
 
 fn legendre_row(n: usize, eps: f64) -> Vec<f64> {
     let mut p = vec![0.0; n + 1];
@@ -48,19 +51,25 @@ fn build_matrix_a(eps: &[f64], n: usize) -> DMatrix<f64> {
 }
 
 fn cond2_rect(a: &DMatrix<f64>) -> f64 {
-    let svd = a.clone().svd(false, false);
-    let s = svd.singular_values;
-    let s_max = s[0];
-    let s_min = s[s.len() - 1];
-    if s_min == 0.0 { f64::INFINITY } else { s_max / s_min }
+    let svd = CustomSVD::new(a);
+    let s_max = svd.s[0];
+    let s_min = svd.s[svd.s.len() - 1];
+    if s_min == 0.0 {
+        f64::INFINITY
+    } else {
+        s_max / s_min
+    }
 }
 
 fn cond2_square(ata: &DMatrix<f64>) -> f64 {
-    let svd = ata.clone().svd(false, false);
-    let s = svd.singular_values;
-    let s_max = s[0];
-    let s_min = s[s.len() - 1];
-    if s_min == 0.0 { f64::INFINITY } else { s_max / s_min }
+    let svd = CustomSVD::new(ata);
+    let s_max = svd.s[0];
+    let s_min = svd.s[svd.s.len() - 1];
+    if s_min == 0.0 {
+        f64::INFINITY
+    } else {
+        s_max / s_min
+    }
 }
 
 fn calc_nrmse(a: &DMatrix<f64>, c: &DVector<f64>, b: &DVector<f64>) -> f64 {
@@ -160,6 +169,14 @@ fn solve_givens(a_orig: &DMatrix<f64>, b_orig: &DVector<f64>) -> (DVector<f64>, 
     (c, time)
 }
 
+fn solve_custom_svd(a: &DMatrix<f64>, b: &DVector<f64>) -> (DVector<f64>, f64) {
+    let start = Instant::now();
+    let svd = CustomSVD::new(a);
+    let c = svd.solve(b);
+    let time = start.elapsed().as_secs_f64();
+    (c, time)
+}
+
 fn test_matrix_qr_givens() {
     println!("\nQR 3x2 ");
     let mut r = DMatrix::<f64>::from_row_slice(3, 2, &[
@@ -206,49 +223,76 @@ fn test_matrix_qr_givens() {
     println!("Q * R:\n{:.1}", &q * &r);
 }
 
+fn test_custom_svd() {
+    println!("\nSVD 3x2 (Custom):");
+    let a = DMatrix::<f64>::from_row_slice(3, 2, &[
+        1.0, 2.0,
+        3.0, 4.0,
+        5.0, 6.0,
+    ]);
+
+    let svd = CustomSVD::new(&a);
+    let mut sigma = DMatrix::zeros(2, 2);
+    sigma[(0, 0)] = svd.s[0];
+    sigma[(1, 1)] = svd.s[1];
+
+    let a_rec = &svd.u * &sigma * svd.v.transpose();
+    println!("cингулярные числа: {:.4}, {:.4}", svd.s[0], svd.s[1]);
+    println!("матрица A:\n{:.1}", a_rec);
+}
+
 fn main() {
     test_matrix_qr_givens();
+    test_custom_svd();
 
-    let filename = "data_5.txt";
-    let (eps, sigma) = match load_data(filename) {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("Error reading file: {}", e);
-            return;
-        }
-    };
+    let datasets = ["data_2.txt", "data_4.txt", "data_5.txt"];
 
-    let b = DVector::from_vec(sigma);
-
-    println!("\n{:-<105}", "");
-    println!(
-        "{:<3} | {:<12} | {:<12} | {:<10} | {:<12} | {:<12} | {:<10}",
-        "N", "cond2(A^T*A)", "NRMSE", "Время", "cond2(A)", "NRMSE(QR)", "Время(QR)"
-    );
-    println!("{:-<105}", "");
-
-    for n in 0..=10 {
-        let a = build_matrix_a(&eps, n);
-        let ata = a.transpose() * &a;
-
-        let cond_ata = cond2_square(&ata);
-        let cond_a = cond2_rect(&a);
-
-        let (nrmse_nu_str, time_nu_str) = match solve_nu(&a, &b) {
-            Some((c_nu, time_nu)) => {
-                let nrmse = calc_nrmse(&a, &c_nu, &b);
-                (format!("{:<12.4e}", nrmse), format!("{:<10.5}", time_nu))
+    for filename in &datasets {
+        let (eps, sigma) = match load_data(filename) {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("Ошибка чтения файла {}: {}", filename, e);
+                continue;
             }
-            None => ("CholeskyFail".to_string(), "---       ".to_string()),
         };
 
-        let (c_qr, time_qr) = solve_givens(&a, &b);
-        let nrmse_qr = calc_nrmse(&a, &c_qr, &b);
+        let b = DVector::from_vec(sigma);
 
+        println!("\n{:=<125}", "");
+        println!("ТАБЛИЦА РЕЗУЛЬТАТОВ ДЛЯ: {}", filename);
+        println!("{:-<125}", "");
         println!(
-            "{:<3} | {:<12.2e} | {} | {} | {:<12.2e} | {:<12.4e} | {:<10.5}",
-            n, cond_ata, nrmse_nu_str, time_nu_str, cond_a, nrmse_qr, time_qr
+            "{:<3} | {:<12} | {:<12} | {:<9} | {:<12} | {:<12} | {:<9} | {:<12} | {:<9}",
+            "N", "cond2(A^T*A)", "NRMSE(НУ)", "Время(НУ)", "cond2(A)", "NRMSE(QR)", "Время(QR)", "NRMSE(SVD)", "Время(SVD)"
         );
+        println!("{:-<125}", "");
+
+        for n in 0..=10 {
+            let a = build_matrix_a(&eps, n);
+            let ata = a.transpose() * &a;
+
+            let cond_ata = cond2_square(&ata);
+            let cond_a = cond2_rect(&a);
+
+            let (nrmse_nu_str, time_nu_str) = match solve_nu(&a, &b) {
+                Some((c_nu, time_nu)) => {
+                    let nrmse = calc_nrmse(&a, &c_nu, &b);
+                    (format!("{:<12.4e}", nrmse), format!("{:<9.5}", time_nu))
+                }
+                None => ("CholeskyFail".to_string(), "---      ".to_string()),
+            };
+
+            let (c_qr, time_qr) = solve_givens(&a, &b);
+            let nrmse_qr = calc_nrmse(&a, &c_qr, &b);
+
+            let (c_svd, time_svd) = solve_custom_svd(&a, &b);
+            let nrmse_svd = calc_nrmse(&a, &c_svd, &b);
+
+            println!(
+                "{:<3} | {:<12.2e} | {} | {} | {:<12.2e} | {:<12.4e} | {:<9.5} | {:<12.4e} | {:<9.5}",
+                n, cond_ata, nrmse_nu_str, time_nu_str, cond_a, nrmse_qr, time_qr, nrmse_svd, time_svd
+            );
+        }
     }
-    println!("{:-<105}", "");
+    println!("{:=<125}", "");
 }

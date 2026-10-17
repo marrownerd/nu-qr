@@ -9,38 +9,39 @@ def legendre_basis(n, eps):
         p[i + 1] = ((2.0 * i + 1.0) * eps * p[i] - i * p[i - 1]) / (i + 1.0)
     return p
 
-data = np.loadtxt("data_2.txt")
-eps = data[:, 0]
-sigma = data[:, 1]
-
-sort_idx = np.argsort(eps)
-eps = eps[sort_idx]
-sigma = sigma[sort_idx]
-
-
-plt.figure(figsize=(10, 6), dpi=300)
-plt.scatter(eps, sigma, color="black", s=10, alpha=0.3, label="Экспериментальные данные")
-
-
+files = ["data_2.txt", "data_4.txt", "data_5.txt"]
 degrees = [1, 2, 4, 8]
 colors = ["blue", "green", "orange", "red"]
 
-for n, col in zip(degrees, colors):
-    A = np.array([legendre_basis(n, e) for e in eps])
-    
-    c, _, _, _ = np.linalg.lstsq(A, sigma, rcond=None)
+for filename in files:
+    try:
+        data = np.loadtxt(filename)
+    except OSError:
+        continue
 
-    f_pred = A @ c
-    
-    plt.plot(eps, f_pred, label=f"Полином Лежандра N = {n}", color=col, linewidth=2)
+    eps = data[:, 0]
+    sigma = data[:, 1]
 
-plt.title("Аппроксимация экспериментальных данных полиномами Лежандра", fontsize=14)
-plt.xlabel(r"Деформация $\varepsilon$", fontsize=12)
-plt.ylabel(r"Напряжение $\sigma$", fontsize=12)
-plt.grid(True, linestyle="--", alpha=0.6)
-plt.legend(fontsize=11)
-plt.tight_layout()
+    sort_idx = np.argsort(eps)
+    eps = eps[sort_idx]
+    sigma = sigma[sort_idx]
 
-plt.savefig("plot_result.png")
-print("1")
-plt.show()
+    plt.figure(figsize=(10, 6), dpi=300)
+    plt.scatter(eps, sigma, color="black", s=10, alpha=0.3, label="Данные")
+
+    for n, col in zip(degrees, colors):
+        A = np.array([legendre_basis(n, e) for e in eps])
+        c, _, _, _ = np.linalg.lstsq(A, sigma, rcond=None)
+        f_pred = A @ c
+        plt.plot(eps, f_pred, label=f"N = {n}", color=col, linewidth=2)
+
+    plt.title(f"{filename}", fontsize=14)
+    plt.xlabel(r"$\varepsilon$", fontsize=12)
+    plt.ylabel(r"$\sigma$", fontsize=12)
+    plt.grid(True, linestyle="--", alpha=0.6)
+    plt.legend(fontsize=11)
+    plt.tight_layout()
+
+    out_name = filename.replace(".txt", ".png")
+    plt.savefig(out_name)
+    plt.show()
